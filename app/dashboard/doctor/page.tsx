@@ -11,7 +11,8 @@ import {
   Calendar,
   User,
   Mail,
-  Phone
+  Phone,
+  X
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { auth } from '@/lib/firebase/config';
@@ -24,6 +25,20 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
+
+// Add type definition at the top of the file after imports
+type Appointment = {
+  id: string;
+  date: Date;
+  time: string;
+  status: 'scheduled' | 'checked-in' | 'in-progress' | 'completed' | 'cancelled';
+  patientId: string;
+  patientName: string;
+  reason: string;
+  [key: string]: any;
+};
 
 export default function DoctorDashboardPage() {
   const router = useRouter();
@@ -37,6 +52,9 @@ export default function DoctorDashboardPage() {
     completed: 0,
     waiting: 0,
     inProgress: 0,
+    cancelled: 0,
+    uniquePatients: 0,
+    completionRate: 0
   });
 
   useEffect(() => {
@@ -103,10 +121,38 @@ export default function DoctorDashboardPage() {
   const fetchTodayAppointments = async (doctorId: string) => {
     try {
       console.log('Fetching today\'s appointments for doctor:', doctorId);
+      
+      // Set up start and end of today
       const today = new Date();
-      const appointments = await getAppointmentsByDoctor(doctorId, today);
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+      const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+      
+      console.log('Fetching appointments between:', startOfDay, 'and', endOfDay);
+      
+      // Get appointments for today
+      const appointmentsQuery = query(
+        collection(db, 'appointments'),
+        where('date', '>=', startOfDay),
+        where('date', '<=', endOfDay),
+        orderBy('date', 'asc')
+      );
+      
+      const appointmentsSnapshot = await getDocs(appointmentsQuery);
+      const appointments = appointmentsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Appointment[];
+      
       console.log('Today\'s appointments fetched:', appointments?.length || 0);
-      setTodayAppointments(appointments || []);
+      
+      // Sort appointments by time
+      const sortedAppointments = appointments.sort((a, b) => {
+        const timeA = a.time.split(':').map(Number);
+        const timeB = b.time.split(':').map(Number);
+        return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
+      });
+      
+      setTodayAppointments(sortedAppointments);
       
       // Calculate stats for today
       const total = appointments?.length || 0;
@@ -128,21 +174,44 @@ export default function DoctorDashboardPage() {
     try {
       console.log('Fetching all appointments for doctor:', doctorId);
       // Fetch all appointments for this doctor (not just today)
-      const appointments = await getAppointmentsByDoctor(doctorId);
+      const appointments = await getAllAppointments();
       console.log('All appointments fetched:', appointments?.length || 0);
-      setAllAppointments(appointments || []);
+      
+      // Sort appointments by date and time
+      const sortedAppointments = appointments.sort((a, b) => {
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+        if (dateA.getTime() === dateB.getTime()) {
+          const timeA = a.time.split(':').map(Number);
+          const timeB = b.time.split(':').map(Number);
+          return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
+        }
+        return dateA.getTime() - dateB.getTime();
+      });
+      
+      setAllAppointments(sortedAppointments);
       
       // Calculate overall stats
       const total = appointments?.length || 0;
       const completed = appointments?.filter(apt => apt.status === 'completed')?.length || 0;
       const waiting = appointments?.filter(apt => apt.status === 'checked-in' || apt.status === 'scheduled')?.length || 0;
       const inProgress = appointments?.filter(apt => apt.status === 'in-progress')?.length || 0;
+      const cancelled = appointments?.filter(apt => apt.status === 'cancelled')?.length || 0;
+
+      // Calculate unique patients
+      const uniquePatients = new Set(appointments.map(apt => apt.patientId)).size;
+
+      // Calculate completion rate
+      const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
 
       const stats = {
         total,
         completed,
         waiting,
         inProgress,
+        cancelled,
+        uniquePatients,
+        completionRate
       };
       
       console.log('Setting appointment stats:', stats);
@@ -200,6 +269,35 @@ export default function DoctorDashboardPage() {
     return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
   });
 
+  // Get the next appointment
+  const getNextAppointment = () => {
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes();
+    
+    return todayAppointments.find(apt => {
+      if (apt.status === 'cancelled') return false;
+      const [hours, minutes] = apt.time.split(':').map(Number);
+      const appointmentTime = hours * 60 + minutes;
+      return appointmentTime > currentTime;
+    });
+  };
+
+  // Get status badge color
+  const getStatusColor = (status: string) => {
+    switch(status) {
+      case 'completed':
+        return 'bg-green-100 text-green-800';
+      case 'cancelled':
+        return 'bg-red-100 text-red-800';
+      case 'checked-in':
+        return 'bg-blue-100 text-blue-800';
+      case 'in-progress':
+        return 'bg-purple-100 text-purple-800';
+      default:
+        return 'bg-yellow-100 text-yellow-800'; // scheduled
+    }
+  };
+
   return (
     <div className="container mx-auto pt-8">
       <div className="flex flex-col md:flex-row items-center justify-between mb-8">
@@ -207,7 +305,6 @@ export default function DoctorDashboardPage() {
           <h1 className="text-3xl font-bold">Doctor Dashboard</h1>
           <p className="text-gray-500 mt-1">
             {format(new Date(), 'EEEE, MMMM d, yyyy')}
-            {doctor && <span className="ml-1">| Welcome, Dr. {doctor.name}</span>}
           </p>
         </div>
 
@@ -228,37 +325,6 @@ export default function DoctorDashboardPage() {
           </Link>
         </div>
       </div>
-
-      {/* Doctor Info Card */}
-      {doctor && (
-        <Card className="mb-8">
-          <CardContent className="p-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <div className="bg-primary/10 p-4 rounded-full">
-                <User className="h-8 w-8 text-primary" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold">{doctor.name || 'Doctor'}</h2>
-                <p className="text-gray-500">
-                  {doctor.specialization || 'General Practitioner'}
-                </p>
-              </div>
-              <div className="ml-auto flex flex-col gap-2 mt-4 sm:mt-0">
-                {doctor.email && (
-                  <Badge variant="outline" className="ml-auto">
-                    <Mail className="h-3 w-3 mr-1" /> {doctor.email}
-                  </Badge>
-                )}
-                {doctor.phone && (
-                  <Badge variant="outline" className="ml-auto">
-                    <Phone className="h-3 w-3 mr-1" /> {doctor.phone}
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -328,22 +394,22 @@ export default function DoctorDashboardPage() {
           </Card>
         </Link>
 
-        <Link href="/dashboard/doctor/appointments?status=in-progress" className="block">
+        <Link href="/dashboard/doctor/appointments?status=cancelled" className="block">
           <Card className="hover:shadow-md transition-shadow">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-500">In Progress</p>
+                  <p className="text-sm font-medium text-gray-500">Cancelled</p>
                   <h3 className="text-3xl font-bold mt-1">
                     {isLoading || isRefreshing ? (
                       <div className="h-8 w-12 bg-gray-200 rounded animate-pulse"></div>
                     ) : (
-                      appointmentStats.inProgress
+                      appointmentStats.cancelled
                     )}
                   </h3>
                 </div>
-                <div className="p-3 bg-yellow-100 rounded-full">
-                  <FileText className="h-6 w-6 text-yellow-600" />
+                <div className="p-3 bg-red-100 rounded-full">
+                  <X className="h-6 w-6 text-red-600" />
                 </div>
               </div>
             </CardContent>
@@ -376,46 +442,65 @@ export default function DoctorDashboardPage() {
               <p className="text-sm text-gray-500">Loading appointments...</p>
             </div>
           ) : todayAppointments.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-4">Time</th>
-                    <th className="text-left py-3 px-4">Patient</th>
-                    <th className="text-left py-3 px-4">Reason</th>
-                    <th className="text-left py-3 px-4">Status</th>
-                    <th className="text-right py-3 px-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {todayAppointments.map((appointment) => (
-                    <tr key={appointment.id} className="border-b hover:bg-gray-50">
-                      <td className="py-3 px-4">{appointment.time}</td>
-                      <td className="py-3 px-4">{appointment.patientName || "Unknown"}</td>
-                      <td className="py-3 px-4">{appointment.reason}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs uppercase font-semibold ${appointment.status === 'completed' ? 'bg-green-100 text-green-800' :
-                              appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                                appointment.status === 'checked-in' ? 'bg-blue-100 text-blue-800' :
-                                  appointment.status === 'in-progress' ? 'bg-purple-100 text-purple-800' :
-                                    'bg-yellow-100 text-yellow-800'
-                            }`}
-                        >
-                          {appointment.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <Link href={`/dashboard/doctor/appointments/${appointment.id}`}>
-                          <Button variant="ghost" size="sm">
-                            View
-                          </Button>
-                        </Link>
-                      </td>
+            <div className="space-y-4">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-3 px-4">Time</th>
+                      <th className="text-left py-3 px-4">Patient</th>
+                      <th className="text-left py-3 px-4">Reason</th>
+                      <th className="text-left py-3 px-4">Status</th>
+                      <th className="text-right py-3 px-4">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {todayAppointments
+                      .sort((a, b) => {
+                        const timeA = a.time.split(':').map(Number);
+                        const timeB = b.time.split(':').map(Number);
+                        return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
+                      })
+                      .slice(0, 5) // Show only first 5 appointments
+                      .map((appointment) => (
+                        <tr key={appointment.id} className="border-b hover:bg-gray-50">
+                          <td className="py-3 px-4">{appointment.time}</td>
+                          <td className="py-3 px-4">{appointment.patientName || "Unknown"}</td>
+                          <td className="py-3 px-4">{appointment.reason}</td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs uppercase font-semibold ${
+                                appointment.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                appointment.status === 'checked-in' ? 'bg-blue-100 text-blue-800' :
+                                appointment.status === 'in-progress' ? 'bg-purple-100 text-purple-800' :
+                                'bg-yellow-100 text-yellow-800'
+                              }`}
+                            >
+                              {appointment.status}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <Link href={`/dashboard/doctor/appointments/${appointment.id}`}>
+                              <Button variant="ghost" size="sm">
+                                View
+                              </Button>
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              {todayAppointments.length > 5 && (
+                <div className="flex justify-center mt-4">
+                  <Link href="/dashboard/doctor/appointments">
+                    <Button variant="outline">
+                      View All {todayAppointments.length} Appointments
+                    </Button>
+                  </Link>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-8">
@@ -427,50 +512,7 @@ export default function DoctorDashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Upcoming Appointments Section (only if there are upcoming appointments) */}
-      {upcomingAppointmentsToday.length > 0 && (
-        <Card className="mt-8">
-          <CardHeader>
-            <CardTitle>Upcoming Next</CardTitle>
-            <CardDescription>Your next scheduled appointments for today</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {upcomingAppointmentsToday.slice(0, 3).map((appointment) => (
-                <div key={appointment.id} className="flex items-center p-4 border rounded-md hover:bg-gray-50">
-                  <div className="bg-blue-100 rounded-full p-3 mr-4">
-                    <Clock className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium">{appointment.patientName}</p>
-                    <p className="text-sm text-gray-500">{appointment.reason}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium">{appointment.time}</p>
-                    <span className={`inline-block px-2 py-1 text-xs rounded-full ${
-                      appointment.status === 'checked-in' ? 'bg-blue-100 text-blue-800' : 'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {appointment.status}
-                    </span>
-                  </div>
-                  <Link href={`/dashboard/doctor/appointments/${appointment.id}`} className="ml-4">
-                    <Button size="sm">View</Button>
-                  </Link>
-                </div>
-              ))}
-              {upcomingAppointmentsToday.length > 3 && (
-                <div className="text-center mt-2">
-                  <Link href="/dashboard/doctor/appointments">
-                    <Button variant="outline">
-                      View All {upcomingAppointmentsToday.length} Upcoming Appointments
-                    </Button>
-                  </Link>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      
     </div>
   );
 }

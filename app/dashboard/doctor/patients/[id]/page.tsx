@@ -30,14 +30,11 @@ type Patient = {
   gender?: string;
   phone?: string;
   email?: string;
-  bloodType?: string;
-  allergies?: string[];
-  chronicConditions?: string[];
 };
 
 type Appointment = {
   id: string;
-  date: string | number;
+  date: Date;
   time: string;
   reason: string;
   status: string;
@@ -90,6 +87,7 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
   const fetchPatientData = async () => {
     try {
       setIsLoading(true);
+      console.log('Fetching data for patient ID:', params.id);
       
       // Get patient data
       const patientDoc = await getDoc(doc(db, 'patients', params.id));
@@ -104,26 +102,36 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
         ...patientDoc.data()
       } as Patient;
       
+      console.log('Patient data:', patientData);
       setPatient(patientData);
       
       // Get appointments
+      console.log('Fetching appointments for patient:', params.id);
       const appointmentsQuery = query(
         collection(db, 'appointments'),
-        where('patientId', '==', params.id),
-        orderBy('date', 'desc')
+        where('patientId', '==', params.id)
       );
       
       const appointmentsSnapshot = await getDocs(appointmentsQuery);
-      const appointmentsData = appointmentsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Appointment[];
+      console.log('Found appointments:', appointmentsSnapshot.size);
+      
+      const appointmentsData = appointmentsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('Raw appointment data:', data);
+        return {
+          id: doc.id,
+          ...data,
+          date: data.date?.toDate?.() || new Date(data.date),
+        };
+      }) as Appointment[];
+
+      console.log('Processed appointments:', appointmentsData);
 
       // Calculate stats
-      const now = new Date().getTime();
+      const now = new Date();
       const completed = appointmentsData.filter(apt => apt.status === 'completed');
       const upcoming = appointmentsData.filter(apt => {
-        const aptDate = new Date(apt.date).getTime();
+        const aptDate = apt.date instanceof Date ? apt.date : new Date(apt.date);
         return aptDate > now && apt.status !== 'cancelled';
       });
 
@@ -131,13 +139,17 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
         ? format(new Date(completed[0].date), 'MMM d, yyyy')
         : null;
 
-      setStats({
+      const statsData = {
         totalVisits: appointmentsData.length,
         completedVisits: completed.length,
         upcomingVisits: upcoming.length,
         lastVisit
-      });
+      };
       
+      console.log('Setting stats:', statsData);
+      setStats(statsData);
+      
+      console.log('Setting appointments:', appointmentsData);
       setAppointments(appointmentsData);
     } catch (error) {
       console.error('Error fetching patient data:', error);
@@ -205,7 +217,7 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>Patient Information</CardTitle>
-          <CardDescription>Basic details and medical history</CardDescription>
+          <CardDescription>Basic details and contact information</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -244,27 +256,6 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
                     Total Visits: {stats.totalVisits}
                   </span>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <Separator />
-
-          {/* Medical History */}
-          <div className="space-y-4">
-            <h3 className="font-medium">Medical History</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-gray-500 mb-1">Blood Type</p>
-                <p>{patient.bloodType || 'Not specified'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500 mb-1">Allergies</p>
-                <p>{patient.allergies?.length ? patient.allergies.join(', ') : 'None reported'}</p>
-              </div>
-              <div className="md:col-span-2">
-                <p className="text-sm text-gray-500 mb-1">Chronic Conditions</p>
-                <p>{patient.chronicConditions?.length ? patient.chronicConditions.join(', ') : 'None reported'}</p>
               </div>
             </div>
           </div>

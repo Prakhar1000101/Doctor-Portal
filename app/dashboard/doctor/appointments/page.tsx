@@ -102,7 +102,7 @@ export default function DoctorAppointmentsPage() {
   const setupAppointmentListener = (doctorId: string) => {
     try {
       setIsLoading(true);
-      console.log('Setting up real-time appointment listener for doctor:', doctorId);
+      console.log('Setting up real-time appointment listener');
       
       // Unsubscribe from previous listener if it exists
       if (unsubscribeListener) {
@@ -118,7 +118,6 @@ export default function DoctorAppointmentsPage() {
       
       const appointmentsQuery = query(
         collection(db, 'appointments'),
-        where('doctorId', '==', doctorId),
         where('date', '>=', Timestamp.fromDate(startOfDay)),
         where('date', '<=', Timestamp.fromDate(endOfDay)),
         orderBy('date'),
@@ -179,17 +178,15 @@ export default function DoctorAppointmentsPage() {
         // Try with full query first
         appointmentsQuery = query(
           collection(db, 'appointments'),
-          where('doctorId', '==', doctorId),
           where('date', '>=', Timestamp.fromDate(startOfDay)),
           where('date', '<=', Timestamp.fromDate(endOfDay)),
           orderBy('date'),
           orderBy('time')
         );
       } catch (indexError) {
-        // Fallback to simpler query without orderBy
+        // Fallback to simpler query without date filtering
         appointmentsQuery = query(
-          collection(db, 'appointments'),
-          where('doctorId', '==', doctorId)
+          collection(db, 'appointments')
         );
         toast.warning('Limited query mode due to database configuration');
       }
@@ -205,25 +202,23 @@ export default function DoctorAppointmentsPage() {
           createdAt: data.createdAt?.toDate().toISOString() || new Date().toISOString()
         };
       });
-      
-      // If using simpler query, filter by date manually and sort
-      if (!appointmentsQuery.toString().includes('orderBy')) {
-        const dateString = format(selectedDate, 'yyyy-MM-dd');
-        appointmentData = appointmentData.filter(appointment => {
-          const appointmentDate = format(appointment.date, 'yyyy-MM-dd');
-          return appointmentDate === dateString;
-        }).sort((a, b) => a.date.getTime() - b.date.getTime());
+
+      // If using simple query, filter dates manually
+      if (!appointmentsQuery.toString().includes('date')) {
+        appointmentData = appointmentData.filter(apt => {
+          const aptDate = apt.date;
+          return aptDate >= startOfDay && aptDate <= endOfDay;
+        });
       }
       
+      console.log(`Retrieved ${appointmentData.length} appointments via regular query`);
       setAppointments(appointmentData);
       applyFilters(appointmentData, filterStatus);
+      setIsLoading(false);
       
     } catch (error) {
       console.error('Error in fallback query:', error);
       toast.error('Failed to load appointments');
-      setAppointments([]);
-      setFilteredAppointments([]);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -373,18 +368,7 @@ export default function DoctorAppointmentsPage() {
                   Scheduled
                 </div>
               </SelectItem>
-              <SelectItem value="checked-in">
-                <div className="flex items-center">
-                  <div className="w-2 h-2 rounded-full bg-blue-400 mr-2"></div>
-                  Checked In
-                </div>
-              </SelectItem>
-              <SelectItem value="in-progress">
-                <div className="flex items-center">
-                  <div className="w-2 h-2 rounded-full bg-purple-400 mr-2"></div>
-                  In Progress
-                </div>
-              </SelectItem>
+              
               <SelectItem value="completed">
                 <div className="flex items-center">
                   <div className="w-2 h-2 rounded-full bg-green-400 mr-2"></div>

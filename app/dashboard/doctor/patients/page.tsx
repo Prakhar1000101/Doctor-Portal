@@ -21,8 +21,10 @@ type Appointment = {
   doctorId: string;
   patientId: string;
   patientName: string;
-  date: string | number;
+  date: Date;
+  time: string;
   status: string;
+  createdAt: Date;
   [key: string]: any;
 };
 
@@ -88,79 +90,69 @@ export default function DoctorPatientsPage() {
     try {
       setIsLoading(true);
       
-      // First, get all appointments for this doctor to identify their patients
+      // Get all appointments to calculate stats
       const appointmentsQuery = query(
         collection(db, 'appointments'),
-        where('doctorId', '==', doctorId)
+        orderBy('date', 'desc') // Order by date to get latest appointments first
       );
       
       const appointmentsSnapshot = await getDocs(appointmentsQuery);
-      const appointments = appointmentsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Appointment[];
+      const appointments = appointmentsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          // Convert Firestore Timestamp to JavaScript Date
+          date: data.date.toDate(),
+          createdAt: data.createdAt?.toDate() || new Date(),
+          doctorId: data.doctorId,
+          patientId: data.patientId,
+          patientName: data.patientName,
+          time: data.time,
+          status: data.status
+        } as Appointment;
+      });
 
-      // Get unique patient IDs from appointments
-      const patientIds = Array.from(new Set(appointments.map(apt => apt.patientId)));
-
-      // If no patient IDs found, return empty array
-      if (patientIds.length === 0) {
-        setPatients([]);
-        setFilteredPatients([]);
-        setIsLoading(false);
-        return;
-      }
-
-      // Fetch all patients from these IDs
-      const patientsData: Patient[] = [];
+      // Fetch all patients directly
+      const patientsQuery = query(
+        collection(db, 'patients'),
+        orderBy('name', 'asc')
+      );
       
-      // Fetch patients in batches of 10 (Firestore limitation for 'in' queries)
-      for (let i = 0; i < patientIds.length; i += 10) {
-        const batch = patientIds.slice(i, i + 10);
-        const batchQuery = query(
-          collection(db, 'patients'),
-          where('id', 'in', batch)
-        );
-        
-        try {
-          const batchSnapshot = await getDocs(batchQuery);
-          const batchData = batchSnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-              id: doc.id, // Use the document ID as the patient ID
-              name: data.name || data.fullName || 'Unknown',
-              age: data.age,
-              gender: data.gender,
-              phone: data.phone,
-              email: data.email,
-              appointmentCount: 0,
-              lastVisit: null,
-              upcomingAppointment: false
-            } as Patient;
-          });
-          patientsData.push(...batchData);
-        } catch (error) {
-          console.error('Error fetching batch of patients:', error);
-          // Continue with next batch even if one fails
-        }
-      }
+      const patientsSnapshot = await getDocs(patientsQuery);
+      const patientsData = patientsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || data.fullName || 'Unknown',
+          age: data.age,
+          gender: data.gender,
+          phone: data.phone,
+          email: data.email,
+          appointmentCount: 0,
+          lastVisit: null,
+          upcomingAppointment: false
+        } as Patient;
+      });
 
       // Process appointments to add visit data
-      const now = new Date().getTime();
+      const now = new Date();
       const enhancedPatients = patientsData.map(patient => {
         const patientAppointments = appointments.filter(apt => apt.patientId === patient.id);
         const completedAppointments = patientAppointments.filter(apt => apt.status === 'completed');
-        const upcomingAppointments = patientAppointments.filter(apt => {
-          const aptDate = new Date(apt.date).getTime();
-          return aptDate > now && apt.status !== 'cancelled';
-        });
+        const upcomingAppointments = patientAppointments.filter(apt => apt.date > now && apt.status !== 'cancelled');
+
+        // Find the most recent completed appointment
+        const lastCompletedAppointment = completedAppointments.length > 0 
+          ? completedAppointments.reduce((latest, current) => 
+              latest.date > current.date ? latest : current
+            )
+          : null;
 
         return {
           ...patient,
           appointmentCount: completedAppointments.length,
-          lastVisit: completedAppointments.length > 0 
-            ? Math.max(...completedAppointments.map(apt => Number(apt.date)))
-            : null,
+          lastVisit: lastCompletedAppointment ? lastCompletedAppointment.date.getTime() : null,
           upcomingAppointment: upcomingAppointments.length > 0
         };
       });
@@ -169,7 +161,7 @@ export default function DoctorPatientsPage() {
       const sortedPatients = enhancedPatients.sort((a, b) => {
         if (a.upcomingAppointment && !b.upcomingAppointment) return -1;
         if (!a.upcomingAppointment && b.upcomingAppointment) return 1;
-        if (a.lastVisit && b.lastVisit) return Number(b.lastVisit) - Number(a.lastVisit);
+        if (a.lastVisit && b.lastVisit) return b.lastVisit - a.lastVisit;
         if (a.lastVisit) return -1;
         if (b.lastVisit) return 1;
         return 0;
@@ -281,7 +273,6 @@ export default function DoctorPatientsPage() {
                     <th className="text-left py-3 px-4">Name</th>
                     <th className="text-left py-3 px-4">Contact</th>
                     <th className="text-left py-3 px-4">Last Visit</th>
-                    <th className="text-left py-3 px-4">Status</th>
                     <th className="text-right py-3 px-4">Actions</th>
                   </tr>
                 </thead>
@@ -315,15 +306,6 @@ export default function DoctorPatientsPage() {
                           </div>
                         ) : (
                           'No visits yet'
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        {patient.upcomingAppointment ? (
-                          <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">
-                            Upcoming Visit
-                          </span>
-                        ) : (
-                          <span className="text-gray-500 text-sm">No scheduled visits</span>
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
