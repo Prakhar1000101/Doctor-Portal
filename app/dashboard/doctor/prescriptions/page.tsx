@@ -24,6 +24,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, X } from 'lucide-react';
+import { MedicineAutocomplete } from '@/components/ui/medicine-autocomplete';
+import { addMedicine as addMedicineToDb } from '@/lib/firebase/medicines';
 
 type Doctor = {
   id: string;
@@ -157,7 +159,7 @@ export default function PrescriptionsPage() {
     setMedicines(updatedMedicines);
   };
 
-  const addMedicine = () => {
+  const addNewMedicineRow = () => {
     setMedicines([...medicines, { name: '', dosage: '', duration: '' }]);
   };
 
@@ -442,7 +444,7 @@ export default function PrescriptionsPage() {
                 <Label>Medications</Label>
                 <Button
                   type="button"
-                  onClick={addMedicine}
+                  onClick={addNewMedicineRow}
                   className="flex items-center gap-2"
                   variant="outline"
                   size="sm"
@@ -455,10 +457,10 @@ export default function PrescriptionsPage() {
                   <div key={index} className="flex gap-4 items-start">
                     <div className="flex-1">
                       <Label htmlFor={`medicine-name-${index}`}>Medicine Name</Label>
-                      <Input
+                      <MedicineAutocomplete
                         id={`medicine-name-${index}`}
                         value={medicine.name}
-                        onChange={(e) => handleMedicineChange(index, 'name', e.target.value)}
+                        onSelect={(value) => handleMedicineChange(index, 'name', value)}
                         placeholder="Enter medicine name"
                         required
                       />

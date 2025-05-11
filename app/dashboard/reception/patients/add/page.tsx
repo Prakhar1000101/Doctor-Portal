@@ -16,8 +16,9 @@ import { getUserRole } from '@/lib/firebase/auth';
 
 const patientSchema = z.object({
     name: z.string().min(2, 'Name is required'),
-    age: z.number().min(0, 'Age is required'),
+    dateOfBirth: z.string().min(1, 'Date of birth is required'),
     gender: z.enum(['Male', 'Female', 'Other']),
+    bodyWeight: z.number().min(0, 'Body weight must be a positive number').optional(),
     phone: z.string().min(10, 'Phone is required'),
     email: z.string().email('Invalid email'),
     address: z.string().min(2, 'Address is required'),
@@ -61,8 +62,9 @@ export default function AddPatientPage() {
         resolver: zodResolver(patientSchema),
         defaultValues: {
             name: '',
-            age: 0,
+            dateOfBirth: '',
             gender: 'Male',
+            bodyWeight: undefined,
             phone: '',
             email: '',
             address: '',
@@ -104,7 +106,14 @@ export default function AddPatientPage() {
             }
 
             console.log('🔵 [Validation] Validating patient data...');
-            const age = Number(data.age);
+            const birthDate = new Date(data.dateOfBirth);
+            const today = new Date();
+            let age = today.getFullYear() - birthDate.getFullYear();
+            const monthDiff = today.getMonth() - birthDate.getMonth();
+            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+                age--;
+            }
+
             if (isNaN(age) || age < 0) {
                 console.log('❌ [Validation Error] Invalid age value');
                 toast.error('Please enter a valid age.');
@@ -118,11 +127,13 @@ export default function AddPatientPage() {
             }
             console.log('✅ [Validation Success] All patient data validated');
 
-            // Create a simpler patient document
-            const patientData = {
+            // Calculate age from date of birth
+            const ageData = {
                 name: data.name,
+                dateOfBirth: birthDate,
                 age: age,
                 gender: data.gender,
+                bodyWeight: data.bodyWeight,
                 phone: data.phone,
                 email: data.email,
                 address: data.address,
@@ -133,11 +144,11 @@ export default function AddPatientPage() {
                 createdBy: currentUser.uid
             };
 
-            console.log('🔵 [Firestore] Attempting to create patient document...', patientData);
+            console.log('🔵 [Firestore] Attempting to create patient document...', ageData);
 
             // Use addDoc instead of setDoc
             const patientsRef = collection(db, 'patients');
-            const docRef = await addDoc(patientsRef, patientData);
+            const docRef = await addDoc(patientsRef, ageData);
             
             console.log('✅ [Firestore Success] Patient document created with ID:', docRef.id);
 
@@ -197,11 +208,30 @@ export default function AddPatientPage() {
                                 </div>
                                 <div>
                                     <label className="block mb-1 font-medium">
-                                        Age <span className="text-red-500">*</span>
+                                        Date of Birth <span className="text-red-500">*</span>
                                     </label>
-                                    <Input type="number" {...form.register('age', { valueAsNumber: true })} placeholder="Enter age" min={0} />
-                                    {form.formState.errors.age && (
-                                        <p className="text-red-500 text-sm">{form.formState.errors.age.message}</p>
+                                    <Input 
+                                        type="date" 
+                                        {...form.register('dateOfBirth')}
+                                        max={new Date().toISOString().split('T')[0]}
+                                    />
+                                    {form.formState.errors.dateOfBirth && (
+                                        <p className="text-red-500 text-sm">{form.formState.errors.dateOfBirth.message}</p>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className="block mb-1 font-medium">
+                                        Body Weight (kg)
+                                    </label>
+                                    <Input 
+                                        type="number" 
+                                        step="0.1"
+                                        {...form.register('bodyWeight', { valueAsNumber: true })}
+                                        placeholder="Enter body weight"
+                                        min={0}
+                                    />
+                                    {form.formState.errors.bodyWeight && (
+                                        <p className="text-red-500 text-sm">{form.formState.errors.bodyWeight.message}</p>
                                     )}
                                 </div>
                                 <div>

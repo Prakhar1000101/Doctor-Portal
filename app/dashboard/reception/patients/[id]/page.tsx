@@ -8,24 +8,23 @@ import {
   Phone, 
   Mail, 
   MapPin, 
-  CalendarClock,
   Edit, 
-  Trash2, 
+  Trash2,
   Droplets,
-  AlertTriangle
+  AlertTriangle,
+  Scale,
+  Calendar
 } from 'lucide-react';
 import { auth, db } from '@/lib/firebase/config';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getUserRole } from '@/lib/firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { getAppointmentsByPatient } from '@/lib/firebase/appointments';
 import { deletePatient } from '@/lib/firebase/patients';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import { format, differenceInYears } from 'date-fns';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,7 +42,6 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [patient, setPatient] = useState<any>(null);
-  const [appointments, setAppointments] = useState<any[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -58,7 +56,6 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
           toast.error('You do not have access to this page');
           router.push('/auth/role-selection');
         } else {
-          // Fetch patient data
           await fetchPatient();
         }
       } catch (error) {
@@ -75,8 +72,6 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
   const fetchPatient = async () => {
     try {
       setIsLoading(true);
-      
-      // Get patient directly from Firestore
       const patientDoc = await getDoc(doc(db, 'patients', params.id));
       
       if (!patientDoc.exists()) {
@@ -84,31 +79,17 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
         return;
       }
       
+      const data = patientDoc.data();
       const patientData = {
         id: patientDoc.id,
-        ...patientDoc.data()
+        ...data,
+        // Convert Firestore Timestamp to JS Date
+        dateOfBirth: data.dateOfBirth?.toDate() || null,
+        // Calculate age dynamically
+        age: data.dateOfBirth ? differenceInYears(new Date(), data.dateOfBirth.toDate()) : null
       };
       
-      console.log('Fetched patient details:', patientData);
       setPatient(patientData);
-      
-      // Fetch patient's appointments separately to isolate potential issues
-      try {
-        console.log('Attempting to fetch appointments for patient ID:', params.id);
-        const patientAppointments = await getAppointmentsByPatient(params.id);
-        console.log('Fetched patient appointments:', patientAppointments);
-        if (Array.isArray(patientAppointments)) {
-          setAppointments(patientAppointments);
-        } else {
-          console.error('Unexpected appointments data format:', patientAppointments);
-          setAppointments([]);
-          toast.error('Failed to load appointment data correctly');
-        }
-      } catch (appointmentError) {
-        console.error('Error fetching patient appointments:', appointmentError);
-        setAppointments([]);
-        toast.error('Failed to load appointments');
-      }
     } catch (error) {
       console.error('Error fetching patient:', error);
       toast.error('Failed to load patient data');
@@ -120,13 +101,6 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
   const handleDeletePatient = async () => {
     try {
       setIsDeleting(true);
-      
-      // Check if patient has appointments
-      if (appointments.length > 0) {
-        toast.error('Cannot delete patient with existing appointments');
-        return;
-      }
-      
       await deletePatient(params.id);
       toast.success('Patient deleted successfully');
       router.push('/dashboard/reception/patients');
@@ -197,220 +171,122 @@ export default function PatientDetailPage({ params }: { params: { id: string } }
                   <AlertDialogDescription>
                     This action cannot be undone. This will permanently delete the patient
                     record and all associated data.
-                    {appointments.length > 0 && (
-                      <p className="mt-2 text-red-500 font-medium">
-                        Warning: This patient has {appointments.length} appointment(s). 
-                        Please cancel or reassign these appointments before deleting.
-                      </p>
-                    )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction 
+                  <AlertDialogAction
+                    className="bg-red-500 hover:bg-red-600"
                     onClick={handleDeletePatient}
-                    disabled={isDeleting || appointments.length > 0}
-                    className="bg-red-500 hover:bg-red-600 focus:ring-red-500"
+                    disabled={isDeleting}
                   >
-                    {isDeleting ? 'Deleting...' : 'Delete Patient'}
+                    {isDeleting ? 'Deleting...' : 'Delete'}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-            
-            <Link href={`/dashboard/reception/appointments/book?patientId=${patient.id}`}>
-              <Button>
-                <CalendarClock className="mr-2 h-4 w-4" />
-                Book Appointment
-              </Button>
-            </Link>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <Tabs defaultValue="details">
-        <TabsList className="mb-8">
-          <TabsTrigger value="details">Patient Details</TabsTrigger>
-          <TabsTrigger value="appointments">Appointments</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="details">
+      {/* Patient Information */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Patient Information</CardTitle>
+          <CardDescription>Basic details and contact information</CardDescription>
+        </CardHeader>
+        <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Personal Information</CardTitle>
-                <CardDescription>Basic details about the patient</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-start">
-                  <User className="h-5 w-5 text-gray-500 mr-3 mt-0.5" />
+            <div className="space-y-4">
+              <div className="flex items-center">
+                <User className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Full Name</div>
+                  <div>{patient.name}</div>
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <Calendar className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Date of Birth</div>
                   <div>
-                    <p className="text-sm text-gray-500">Full Name</p>
-                    <p className="font-medium">{patient.name || 'Not provided'}</p>
+                    {patient.dateOfBirth ? (
+                      <>
+                        {format(patient.dateOfBirth, 'MMMM d, yyyy')}
+                        <span className="ml-2 text-sm text-gray-500">
+                          ({patient.age} years old)
+                        </span>
+                      </>
+                    ) : (
+                      'Not recorded'
+                    )}
                   </div>
                 </div>
-                
-                {patient.age && (
-                  <div className="flex items-start">
-                    <CalendarClock className="h-5 w-5 text-gray-500 mr-3 mt-0.5" />
-                    <div>
-                      <p className="text-sm text-gray-500">Age</p>
-                      <p className="font-medium">{patient.age} years</p>
-                    </div>
-                  </div>
-                )}
-                
-                {patient.gender && (
-                  <div className="flex items-start">
-                    <User className="h-5 w-5 text-gray-500 mr-3 mt-0.5" />
-                    <div>
-                      <p className="text-sm text-gray-500">Gender</p>
-                      <p className="font-medium">{patient.gender}</p>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="flex items-start">
-                  <Phone className="h-5 w-5 text-gray-500 mr-3 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-gray-500">Phone Number</p>
-                    <p className="font-medium">{patient.phone || 'Not provided'}</p>
-                  </div>
+              </div>
+
+              <div className="flex items-center">
+                <Phone className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Phone Number</div>
+                  <div>{patient.phone}</div>
                 </div>
-                
-                {patient.email && (
-                  <div className="flex items-start">
-                    <Mail className="h-5 w-5 text-gray-500 mr-3 mt-0.5" />
-                    <div>
-                      <p className="text-sm text-gray-500">Email Address</p>
-                      <p className="font-medium">
-                        <a href={`mailto:${patient.email}`} className="text-blue-600 hover:underline">
-                          {patient.email}
-                        </a>
-                      </p>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="flex items-start">
-                  <MapPin className="h-5 w-5 text-gray-500 mr-3 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-gray-500">Address</p>
-                    <p className="font-medium">{patient.address || 'Not provided'}</p>
-                  </div>
+              </div>
+
+              <div className="flex items-center">
+                <Mail className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Email Address</div>
+                  <div>{patient.email || 'Not provided'}</div>
                 </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>Medical Information</CardTitle>
-                <CardDescription>Health-related details</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {patient.bloodGroup && (
-                  <div className="flex items-start">
-                    <Droplets className="h-5 w-5 text-red-500 mr-3 mt-0.5" />
-                    <div>
-                      <p className="text-sm text-gray-500">Blood Group</p>
-                      <p className="font-medium">{patient.bloodGroup}</p>
-                    </div>
-                  </div>
-                )}
-                
-                {patient.guardian && (
-                  <div>
-                    <p className="text-sm text-gray-500">Guardian</p>
-                    <p className="font-medium">{patient.guardian}</p>
-                  </div>
-                )}
-                
-                {patient.notes && (
-                  <div>
-                    <p className="text-sm text-gray-500">Notes</p>
-                    <p className="mt-1">{patient.notes}</p>
-                  </div>
-                )}
-                
-                {!patient.notes && !patient.guardian && !patient.bloodGroup && (
-                  <p className="text-gray-500">No medical information recorded</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-        
-        <TabsContent value="appointments">
-          <Card>
-            <CardHeader>
-              <CardTitle>Appointment History</CardTitle>
-              <CardDescription>
-                {appointments.length} appointment{appointments.length !== 1 ? 's' : ''} found
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {appointments.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="border-b text-xs uppercase">
-                        <th className="text-left py-3 px-4">Date & Time</th>
-                        <th className="text-left py-3 px-4">Reason</th>
-                        <th className="text-left py-3 px-4">Status</th>
-                        <th className="text-right py-3 px-4">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {appointments.map((appointment) => (
-                        <tr key={appointment.id} className="border-b hover:bg-gray-50">
-                          <td className="py-3 px-4">
-                            {appointment.date && typeof appointment.date.getTime === 'function' ? 
-                              format(new Date(appointment.date), 'MMM d, yyyy') : 
-                              'Invalid Date'
-                            }
-                            <div className="text-xs text-gray-500">{appointment.time}</div>
-                          </td>
-                          <td className="py-3 px-4">{appointment.reason}</td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2 py-1 rounded-full text-xs uppercase font-semibold ${
-                                appointment.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                                appointment.status === 'checked-in' ? 'bg-blue-100 text-blue-800' :
-                                appointment.status === 'in-progress' ? 'bg-purple-100 text-purple-800' :
-                                'bg-yellow-100 text-yellow-800'
-                              }`}
-                            >
-                              {appointment.status}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <Link href={`/dashboard/reception/appointments/${appointment.id}`}>
-                              <Button variant="ghost" size="sm">
-                                View
-                              </Button>
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              </div>
+
+              <div className="flex items-center">
+                <MapPin className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Address</div>
+                  <div>{patient.address}</div>
                 </div>
-              ) : (
-                <div className="text-center py-8">
-                  <p className="text-gray-500">No appointments found for this patient</p>
-                  <Link href={`/dashboard/reception/appointments/book?patientId=${patient.id}`}>
-                    <Button className="mt-4">
-                      Book New Appointment
-                    </Button>
-                  </Link>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center">
+                <Scale className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Body Weight</div>
+                  <div>{patient.bodyWeight ? `${patient.bodyWeight} kg` : 'Not recorded'}</div>
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <Droplets className="h-5 w-5 text-gray-500 mr-2" />
+                <div>
+                  <div className="text-sm text-gray-500">Blood Group</div>
+                  <div>{patient.bloodGroup || 'Not recorded'}</div>
+                </div>
+              </div>
+
+              {patient.guardian && (
+                <div className="flex items-center">
+                  <User className="h-5 w-5 text-gray-500 mr-2" />
+                  <div>
+                    <div className="text-sm text-gray-500">Guardian</div>
+                    <div>{patient.guardian}</div>
+                  </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+
+              {patient.notes && (
+                <div>
+                  <div className="text-sm text-gray-500 mb-1">Additional Notes</div>
+                  <div className="p-3 bg-gray-50 rounded-md">{patient.notes}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 } 

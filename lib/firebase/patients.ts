@@ -21,8 +21,8 @@ export type Patient = {
   name?: string;
   email?: string;
   phone: string;
-  dateOfBirth?: Date;
-  age?: number;
+  dateOfBirth: Date | null;  // Store as Date object
+  bodyWeight?: number;  // in kg
   address: string;
   medicalHistory?: string;
   insuranceProvider?: string;
@@ -35,17 +35,16 @@ export type Patient = {
 };
 
 // Add a new patient
-export const addPatient = async (patientData: Patient) => {
+export const addPatient = async (patientData: Omit<Patient, 'id'>) => {
   try {
-    const patientRef = await addDoc(collection(db, 'patients'), {
+    // Convert Date objects to Timestamps for Firestore
+    const firestoreData = {
       ...patientData,
-      // Only convert dateOfBirth to Timestamp if it exists
-      ...(patientData.dateOfBirth && { 
-        dateOfBirth: Timestamp.fromDate(patientData.dateOfBirth) 
-      }),
+      dateOfBirth: patientData.dateOfBirth ? Timestamp.fromDate(patientData.dateOfBirth) : null,
       createdAt: Timestamp.now()
-    });
-    
+    };
+
+    const patientRef = await addDoc(collection(db, 'patients'), firestoreData);
     return patientRef.id;
   } catch (error: any) {
     throw new Error(error.message);
@@ -55,15 +54,13 @@ export const addPatient = async (patientData: Patient) => {
 // Update a patient
 export const updatePatient = async (patientId: string, patientData: Partial<Patient>) => {
   try {
-    const patientRef = doc(db, 'patients', patientId);
-    
-    // Convert date of birth to Timestamp if it exists
-    const updateData = { ...patientData };
-    if (updateData.dateOfBirth) {
-      updateData.dateOfBirth = Timestamp.fromDate(updateData.dateOfBirth);
-    }
-    
-    await updateDoc(patientRef, updateData);
+    const firestoreData = {
+      ...patientData,
+      dateOfBirth: patientData.dateOfBirth ? Timestamp.fromDate(patientData.dateOfBirth) : null,
+      updatedAt: Timestamp.now()
+    };
+
+    await updateDoc(doc(db, 'patients', patientId), firestoreData);
     return true;
   } catch (error: any) {
     throw new Error(error.message);
@@ -94,7 +91,7 @@ export const getPatient = async (patientId: string) => {
     return {
       id: patientDoc.id,
       ...data,
-      dateOfBirth: data.dateOfBirth?.toDate(),
+      dateOfBirth: data.dateOfBirth?.toDate() || null,
       createdAt: data.createdAt?.toDate().toISOString()
     } as Patient;
   } catch (error: any) {
@@ -174,5 +171,25 @@ export const getRawPatients = async () => {
   } catch (error: any) {
     console.error('Error fetching raw patients:', error);
     return [];
+  }
+};
+
+// Get all patients
+export const getPatients = async () => {
+  try {
+    const patientsQuery = query(collection(db, 'patients'), orderBy('name'));
+    const patientsSnapshot = await getDocs(patientsQuery);
+    
+    return patientsSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        dateOfBirth: data.dateOfBirth?.toDate() || null,
+        createdAt: data.createdAt?.toDate().toISOString()
+      } as Patient;
+    });
+  } catch (error: any) {
+    throw new Error(error.message);
   }
 };

@@ -12,7 +12,8 @@ import {
   User,
   Mail,
   Phone,
-  X
+  X,
+  Download
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { auth } from '@/lib/firebase/config';
@@ -27,6 +28,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
+import * as XLSX from 'xlsx';
 
 // Add type definition at the top of the file after imports
 type Appointment = {
@@ -252,6 +254,77 @@ export default function DoctorDashboardPage() {
     }
   };
 
+  // Modify the download function to handle dates properly
+  const downloadTodayAppointments = () => {
+    try {
+      // Sort appointments by time
+      const sortedAppointments = todayAppointments
+        .sort((a, b) => {
+          const timeA = a.time.split(':').map(Number);
+          const timeB = b.time.split(':').map(Number);
+          return (timeA[0] * 60 + timeA[1]) - (timeB[0] * 60 + timeB[1]);
+        });
+
+      // Prepare data for Excel with safe date handling
+      const excelData = sortedAppointments.map(appointment => {
+        // Safely format the created at date
+        let formattedCreatedAt = '';
+        try {
+          if (appointment.createdAt) {
+            // Handle both Date objects and Firestore timestamps
+            const createdAtDate = appointment.createdAt instanceof Date 
+              ? appointment.createdAt 
+              : appointment.createdAt.toDate?.() 
+                ? appointment.createdAt.toDate() 
+                : new Date(appointment.createdAt);
+            formattedCreatedAt = format(createdAtDate, 'yyyy-MM-dd HH:mm');
+          }
+        } catch (error) {
+          console.warn('Error formatting date for appointment:', appointment.id);
+          formattedCreatedAt = 'N/A';
+        }
+
+        return {
+          Time: appointment.time,
+          'Patient Name': appointment.patientName || 'Unknown',
+          'Reason': appointment.reason || 'N/A',
+          'Status': appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1),
+          'Patient ID': appointment.patientId || 'N/A',
+          'Notes': appointment.notes || '',
+          'Created At': formattedCreatedAt
+        };
+      });
+
+      // Create worksheet
+      const ws = XLSX.utils.json_to_sheet(excelData);
+
+      // Set column widths
+      const colWidths = [
+        { wch: 10 },  // Time
+        { wch: 25 },  // Patient Name
+        { wch: 30 },  // Reason
+        { wch: 15 },  // Status
+        { wch: 20 },  // Patient ID
+        { wch: 30 },  // Notes
+        { wch: 20 }   // Created At
+      ];
+      ws['!cols'] = colWidths;
+
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Today's Appointments");
+
+      // Generate Excel file
+      const today = format(new Date(), 'yyyy-MM-dd');
+      XLSX.writeFile(wb, `appointments-${today}.xlsx`);
+
+      toast.success('Appointments downloaded successfully');
+    } catch (error) {
+      console.error('Error downloading appointments:', error);
+      toast.error('Failed to download appointments');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="h-screen flex items-center justify-center">
@@ -431,9 +504,21 @@ export default function DoctorDashboardPage() {
               )}
             </CardDescription>
           </div>
-          <Badge variant="outline" className="ml-auto">
-            {format(new Date(), 'MMMM d, yyyy')}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={downloadTodayAppointments}
+              className="flex items-center gap-2"
+              title="Download today's appointments"
+            >
+              <Download size={16} />
+              Download
+            </Button>
+            <Badge variant="outline" className="ml-auto">
+              {format(new Date(), 'MMMM d, yyyy')}
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading || isRefreshing ? (
