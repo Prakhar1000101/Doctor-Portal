@@ -14,7 +14,8 @@ import {
   PlusCircle,
   FileText,
   Menu,
-  X
+  X,
+  Lock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getUserRole } from '@/lib/firebase/auth';
@@ -227,6 +228,11 @@ const DashboardSidebar = () => {
       label: 'Prescriptions',
       icon: <FileText size={18} />,
       href: '/dashboard/doctor/prescriptions',
+    },
+    {
+      label: 'Security',
+      icon: <Lock size={18} />,
+      href: '/dashboard/doctor/security',
     },
   ];
   

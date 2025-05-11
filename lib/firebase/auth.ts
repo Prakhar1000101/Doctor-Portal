@@ -122,17 +122,17 @@ export const getUserRole = async (userId: string) => {
 };
 
 // Verify security code
-export const verifySecurityCode = (code: string, role: 'reception' | 'doctor') => {
-  const receptionCode = process.env.NEXT_PUBLIC_RECEPTION_SECURITY_CODE;
-  const doctorCode = process.env.NEXT_PUBLIC_DOCTOR_SECURITY_CODE;
+export const verifySecurityCode = async (code: string, role: 'reception' | 'doctor') => {
+  try {
+    const securityDoc = await getDoc(doc(db, 'security', 'role_security'));
+    if (!securityDoc.exists()) {
+      throw new Error('Security codes not configured');
+    }
 
-  if (role === 'reception' && code === receptionCode) {
-    return true;
+    const securityData = securityDoc.data();
+    return securityData[role] === code;
+  } catch (error: any) {
+    console.error('Error verifying security code:', error);
+    return false;
   }
-
-  if (role === 'doctor' && code === doctorCode) {
-    return true;
-  }
-
-  return false;
 };
